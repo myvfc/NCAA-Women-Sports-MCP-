@@ -1,0 +1,33 @@
+{
+  "name": "ncaa-womens-sports-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for NCAA women's sports (softball, basketball, volleyball, soccer)",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "ncaa-womens-sports-mcp": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "mcp",
+    "ncaa",
+    "womens-sports",
+    "softball",
+    "basketball",
+    "volleyball",
+    "soccer",
+    "oklahoma"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
