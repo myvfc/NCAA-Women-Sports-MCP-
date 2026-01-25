@@ -1,6 +1,12 @@
-# NCAA Women's Sports MCP
+#  NCAA Women's Sports MCP
 
-Model Context Protocol server for NCAA women's sports data, focusing on Oklahoma Sooners coverage.
+HTTP-based Model Context Protocol server for NCAA women's sports data, focusing on Oklahoma Sooners coverage.
+
+## Architecture
+
+This is an **HTTP server** (not stdio) that accepts JSON-RPC requests at the `/mcp` endpoint.
+
+Your orchestrator calls this server via HTTP POST requests.
 
 ## Supported Sports
 
@@ -36,9 +42,18 @@ npm install
 
 ## Usage
 
+Start the HTTP server:
+
 ```bash
 npm start
 ```
+
+The server will listen on the PORT specified by environment variable (default: 3000).
+
+Endpoints:
+- `GET /` - Health check and service info
+- `GET /health` - Simple health check
+- `POST /mcp` - MCP JSON-RPC endpoint
 
 ## Deployment to Railway
 
