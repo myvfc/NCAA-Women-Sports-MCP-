@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -339,3 +337,4 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📍 Endpoint: http://0.0.0.0:${PORT}/mcp`);
   console.log(`🏐 Ready to serve women's sports data!\n`);
 });
+
