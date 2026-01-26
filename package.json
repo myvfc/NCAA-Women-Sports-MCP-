@@ -1,31 +1,17 @@
-{
-  "name": "ncaa-womens-sports-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for NCAA women's sports (softball, basketball, volleyball, soccer)",
-  "type": "module",
-  "main": "server-http.js",
-  "scripts": {
-    "start": "node server-http.js",
-    "dev": "node --watch server-http.js"
-  },
-  "keywords": [
-    "mcp",
-    "ncaa",
-    "womens-sports",
-    "softball",
-    "basketball",
-    "volleyball",
-    "soccer",
-    "oklahoma"
-  ],
-  "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "node-fetch": "^3.3.2"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+Starting Container
+Node.js v18.20.8
+npm warn config production Use `--omit=dev` instead.
+> ncaa-womens-sports-mcp@1.0.0 start
+> node server-http.js
+Error: Cannot find module '/app/server-http.js'
+    at Module._load (node:internal/modules/cjs/loader:981:27)
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1140:15)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:128:12)
+    at node:internal/main/run_main_module:28:49 {
+node:internal/modules/cjs/loader:1143
+  code: 'MODULE_NOT_FOUND',
+  throw err;
+  requireStack: []
+  ^
 }
+npm warn config production Use `--omit=dev` instead.
