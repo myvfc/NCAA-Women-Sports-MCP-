@@ -30,22 +30,23 @@ function filterToOU(data) {
     return OU_KEYWORDS.some(k => lower.includes(k));
   }
 
-  function filterGame(game) {
-    return (
-      isOU(game.home?.names?.full) ||
-      isOU(game.home?.names?.short) ||
-      isOU(game.away?.names?.full) ||
-      isOU(game.away?.names?.short) ||
-      isOU(game.homeTeam) ||
-      isOU(game.awayTeam) ||
-      isOU(game.home_team) ||
-      isOU(game.away_team) ||
-      isOU(game.teams?.home?.name) ||
-      isOU(game.teams?.away?.name) ||
-      isOU(game.competitor1?.name) ||
-      isOU(game.competitor2?.name)
-    );
-  }
+ function filterGame(game) {
+  const g = game.game || game; // unwrap the nested game object
+  return (
+    isOU(g.home?.names?.full) ||
+    isOU(g.home?.names?.short) ||
+    isOU(g.away?.names?.full) ||
+    isOU(g.away?.names?.short) ||
+    isOU(g.homeTeam) ||
+    isOU(g.awayTeam) ||
+    isOU(g.home_team) ||
+    isOU(g.away_team) ||
+    isOU(g.teams?.home?.name) ||
+    isOU(g.teams?.away?.name) ||
+    isOU(g.competitor1?.name) ||
+    isOU(g.competitor2?.name)
+  );
+}
 
   if (Array.isArray(data)) {
     const filtered = data.filter(filterGame);
