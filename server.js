@@ -93,11 +93,31 @@ async function getOUSchedule(sport, year, month, activeDays) {
       const scoreResponse = await fetch(scoreUrl, { signal: AbortSignal.timeout(8000) });
       if (!scoreResponse.ok) continue;
       const scoreData = await scoreResponse.json();
-      const filtered = filterToOU(scoreData);
-      const games = filtered.games || filtered.contests || filtered.events || [];
-      if (Array.isArray(games) && games.length > 0) {
-        ouGames.push({ date: d.contest_date, weekday: d.weekday, games });
-      }
+    const filtered = filterToOU(scoreData);
+const games = filtered.games || filtered.contests || filtered.events || [];
+if (Array.isArray(games) && games.length > 0) {
+  const slimGames = games.map(g => {
+    const game = g.game || g;
+    return {
+      gameID: game.gameID,
+      date: game.startDate,
+      time: game.startTime,
+      state: game.gameState,
+      home: {
+        name: game.home?.names?.short,
+        score: game.home?.score,
+        winner: game.home?.winner
+      },
+      away: {
+        name: game.away?.names?.short,
+        score: game.away?.score,
+        winner: game.away?.winner
+      },
+      url: game.url
+    };
+  });
+  ouGames.push({ date: d.contest_date, weekday: d.weekday, games: slimGames });
+}
     } catch (e) {
       console.log(`  Skipping ${dateStr}: ${e.message}`);
     }
