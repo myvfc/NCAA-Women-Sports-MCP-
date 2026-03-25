@@ -21,7 +21,6 @@ const OU_TEAM_IDS = {
 };
 
 // ── OU FILTER HELPER ─────────────────────────────────────────────────
-// Filters any NCAA API response down to games/events involving Oklahoma
 function filterToOU(data) {
   const OU_KEYWORDS = ['oklahoma', 'sooners', 'ou '];
 
@@ -48,13 +47,11 @@ function filterToOU(data) {
     );
   }
 
-  // Handle array at top level
   if (Array.isArray(data)) {
     const filtered = data.filter(filterGame);
-    return filtered.length > 0 ? filtered : data; // fall back to all if no OU found
+    return filtered.length > 0 ? filtered : data;
   }
 
-  // Handle object with common wrapper keys
   const wrapperKeys = ['games', 'contests', 'events', 'schedule', 'scoreboard'];
   for (const key of wrapperKeys) {
     if (Array.isArray(data[key])) {
@@ -67,105 +64,137 @@ function filterToOU(data) {
     }
   }
 
-  // Nothing to filter — return as-is
   return data;
+}
+
+// ── TWO-STEP OU SCHEDULE HELPER ──────────────────────────────────────
+async function getOUSchedule(sport, year, month, activeDays) {
+  const calUrl = `${NCAA_API_URL}/schedule/${sport}/d1/${year}/${month}`;
+  console.log(`  Fetching calendar: ${calUrl}`);
+
+  const calResponse = await fetch(calUrl, { signal: AbortSignal.timeout(10000) });
+  if (!calResponse.ok) {
+    return { error: `NCAA API error: ${calResponse.status}` };
+  }
+
+  const calData = await calResponse.json();
+  const gameDates = (calData.gameDates || [])
+    .filter(d => d.games > 0 && activeDays.includes(d.weekday))
+    .slice(0, 8);
+
+  const ouGames = [];
+
+  for (const d of gameDates) {
+    const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(d.day).padStart(2, '0')}`;
+    const scoreUrl = `${NCAA_API_URL}/scoreboard/${sport}/d1/${dateStr}/all-conf`;
+    console.log(`  Fetching scoreboard: ${scoreUrl}`);
+    try {
+      const scoreResponse = await fetch(scoreUrl, { signal: AbortSignal.timeout(8000) });
+      if (!scoreResponse.ok) continue;
+      const scoreData = await scoreResponse.json();
+      const filtered = filterToOU(scoreData);
+      const games = filtered.games || filtered.contests || filtered.events || [];
+      if (Array.isArray(games) && games.length > 0) {
+        ouGames.push({ date: d.contest_date, weekday: d.weekday, games });
+      }
+    } catch (e) {
+      console.log(`  Skipping ${dateStr}: ${e.message}`);
+    }
+  }
+
+  // If nothing found on primary days, try all days with games
+  if (ouGames.length === 0) {
+    const allGameDates = (calData.gameDates || [])
+      .filter(d => d.games > 0 && !activeDays.includes(d.weekday))
+      .slice(0, 8);
+
+    for (const d of allGameDates) {
+      const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(d.day).padStart(2, '0')}`;
+      const scoreUrl = `${NCAA_API_URL}/scoreboard/${sport}/d1/${dateStr}/all-conf`;
+      console.log(`  Fetching scoreboard (extended): ${scoreUrl}`);
+      try {
+        const scoreResponse = await fetch(scoreUrl, { signal: AbortSignal.timeout(8000) });
+        if (!scoreResponse.ok) continue;
+        const scoreData = await scoreResponse.json();
+        const filtered = filterToOU(scoreData);
+        const games = filtered.games || filtered.contests || filtered.events || [];
+        if (Array.isArray(games) && games.length > 0) {
+          ouGames.push({ date: d.contest_date, weekday: d.weekday, games });
+        }
+      } catch (e) {
+        console.log(`  Skipping ${dateStr}: ${e.message}`);
+      }
+    }
+  }
+
+  return ouGames.length > 0
+    ? { team: 'Oklahoma Sooners', sport, season: year, month, ouGames }
+    : { message: `No OU ${sport} games found in ${year}/${month}. Season may be over or not yet started.` };
 }
 // ─────────────────────────────────────────────────────────────────────
 
-// Helper to get current date
 function getCurrentDateString() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}/${month}/${day}`;
+  return `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
 }
 
-// Helper to format date
 function formatDateForAPI(date) {
   if (!date) return getCurrentDateString();
   return date.replace(/-/g, '/');
 }
 
-// Health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'healthy' });
-});
+app.get('/health', (req, res) => res.status(200).json({ status: 'healthy' }));
 
-// Root
 app.get('/', (req, res) => {
-  res.json({
-    service: 'NCAA Women\'s Sports MCP Server',
-    status: 'running',
-    tools: 20,
-    ncaaApiUrl: NCAA_API_URL
-  });
+  res.json({ service: 'NCAA Women\'s Sports MCP Server', status: 'running', tools: 20, ncaaApiUrl: NCAA_API_URL });
 });
 
-// MCP endpoint
 app.all('/mcp', async (req, res) => {
   console.log(`${req.method} /mcp`);
 
-  // Handle GET
   if (req.method === 'GET') {
     return res.json({ service: 'NCAA Women\'s Sports MCP', status: 'ready' });
   }
 
-  // Handle POST
   try {
-    // Auth check
     if (MCP_API_KEY) {
       const auth = req.headers.authorization;
       if (!auth || auth !== `Bearer ${MCP_API_KEY}`) {
-        return res.status(401).json({
-          jsonrpc: '2.0',
-          error: { code: -32001, message: 'Unauthorized' },
-          id: req.body?.id
-        });
+        return res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: req.body?.id });
       }
     }
 
     const { method, params, id } = req.body;
     console.log(`  Method: ${method}`);
 
-    // Initialize
     if (method === 'initialize') {
       return res.json({
         jsonrpc: '2.0',
-        result: {
-          protocolVersion: '2025-06-18',
-          capabilities: { tools: {} },
-          serverInfo: { name: 'ncaa-womens-sports', version: '1.0.0' }
-        },
+        result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ncaa-womens-sports', version: '1.0.0' } },
         id
       });
     }
 
-    // List tools
     if (method === 'tools/list') {
       return res.json({
         jsonrpc: '2.0',
         result: {
           tools: [
-            // SOFTBALL
             { name: 'get_softball_scores', description: 'Get OU softball scores for a specific date' },
             { name: 'get_softball_schedule', description: 'Get OU softball schedule for a specific month' },
             { name: 'get_softball_rankings', description: 'Get softball rankings' },
             { name: 'get_softball_stats', description: 'Get OU softball stats' },
             { name: 'get_softball_standings', description: 'Get softball standings' },
-            // WOMEN'S BASKETBALL
             { name: 'get_womens_basketball_scores', description: 'Get OU women\'s basketball scores' },
             { name: 'get_womens_basketball_schedule', description: 'Get OU women\'s basketball schedule' },
             { name: 'get_womens_basketball_rankings', description: 'Get women\'s basketball rankings' },
             { name: 'get_womens_basketball_stats', description: 'Get OU women\'s basketball stats' },
             { name: 'get_womens_basketball_standings', description: 'Get women\'s basketball standings' },
-            // VOLLEYBALL
             { name: 'get_volleyball_scores', description: 'Get OU volleyball scores' },
             { name: 'get_volleyball_schedule', description: 'Get OU volleyball schedule' },
             { name: 'get_volleyball_rankings', description: 'Get volleyball rankings' },
             { name: 'get_volleyball_stats', description: 'Get OU volleyball stats' },
             { name: 'get_volleyball_standings', description: 'Get volleyball standings' },
-            // SOCCER
             { name: 'get_soccer_scores', description: 'Get OU soccer scores' },
             { name: 'get_soccer_schedule', description: 'Get OU soccer schedule' },
             { name: 'get_soccer_rankings', description: 'Get soccer rankings' },
@@ -177,7 +206,6 @@ app.all('/mcp', async (req, res) => {
       });
     }
 
-    // Call tool
     if (method === 'tools/call') {
       const { name, arguments: args } = params;
       console.log(`  Tool call: ${name}`, args);
@@ -199,14 +227,9 @@ app.all('/mcp', async (req, res) => {
       }
 
       if (name === 'get_softball_schedule') {
-        const year = args.year;
-        const month = args.month;
-        const url = `${NCAA_API_URL}/schedule/softball/d1/${year}/${month}`;
-        console.log(`  Fetching: ${url}`);
         try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-          if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = filterToOU(await response.json());
+          const data = await getOUSchedule('softball', args.year, args.month, ['Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+          if (data.error) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: data.error }] }, id });
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
@@ -219,22 +242,19 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
       }
 
       if (name === 'get_softball_stats') {
-        const teamId = OU_TEAM_IDS.softball;
-        const url = `${NCAA_API_URL}/stats/softball/d1/current/team/${teamId}`;
+        const url = `${NCAA_API_URL}/stats/softball/d1/current/team/${OU_TEAM_IDS.softball}`;
         console.log(`  Fetching: ${url}`);
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -246,8 +266,7 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -270,14 +289,9 @@ app.all('/mcp', async (req, res) => {
       }
 
       if (name === 'get_womens_basketball_schedule') {
-        const year = args.year;
-        const month = args.month;
-        const url = `${NCAA_API_URL}/schedule/basketball-women/d1/${year}/${month}`;
-        console.log(`  Fetching: ${url}`);
         try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-          if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = filterToOU(await response.json());
+          const data = await getOUSchedule('basketball-women', args.year, args.month, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+          if (data.error) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: data.error }] }, id });
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
@@ -290,22 +304,19 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
       }
 
       if (name === 'get_womens_basketball_stats') {
-        const teamId = OU_TEAM_IDS['basketball-women'];
-        const url = `${NCAA_API_URL}/stats/basketball-women/d1/current/team/${teamId}`;
+        const url = `${NCAA_API_URL}/stats/basketball-women/d1/current/team/${OU_TEAM_IDS['basketball-women']}`;
         console.log(`  Fetching: ${url}`);
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -317,8 +328,7 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -341,14 +351,9 @@ app.all('/mcp', async (req, res) => {
       }
 
       if (name === 'get_volleyball_schedule') {
-        const year = args.year;
-        const month = args.month;
-        const url = `${NCAA_API_URL}/schedule/volleyball-women/d1/${year}/${month}`;
-        console.log(`  Fetching: ${url}`);
         try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-          if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = filterToOU(await response.json());
+          const data = await getOUSchedule('volleyball-women', args.year, args.month, ['Fri', 'Sat', 'Sun']);
+          if (data.error) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: data.error }] }, id });
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
@@ -361,22 +366,19 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
       }
 
       if (name === 'get_volleyball_stats') {
-        const teamId = OU_TEAM_IDS['volleyball-women'];
-        const url = `${NCAA_API_URL}/stats/volleyball-women/d1/current/team/${teamId}`;
+        const url = `${NCAA_API_URL}/stats/volleyball-women/d1/current/team/${OU_TEAM_IDS['volleyball-women']}`;
         console.log(`  Fetching: ${url}`);
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -388,8 +390,7 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -412,14 +413,9 @@ app.all('/mcp', async (req, res) => {
       }
 
       if (name === 'get_soccer_schedule') {
-        const year = args.year;
-        const month = args.month;
-        const url = `${NCAA_API_URL}/schedule/soccer-women/d1/${year}/${month}`;
-        console.log(`  Fetching: ${url}`);
         try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-          if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = filterToOU(await response.json());
+          const data = await getOUSchedule('soccer-women', args.year, args.month, ['Thu', 'Fri', 'Sun']);
+          if (data.error) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: data.error }] }, id });
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
@@ -432,22 +428,19 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
       }
 
       if (name === 'get_soccer_stats') {
-        const teamId = OU_TEAM_IDS['soccer-women'];
-        const url = `${NCAA_API_URL}/stats/soccer-women/d1/current/team/${teamId}`;
+        const url = `${NCAA_API_URL}/stats/soccer-women/d1/current/team/${OU_TEAM_IDS['soccer-women']}`;
         console.log(`  Fetching: ${url}`);
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
@@ -459,39 +452,23 @@ app.all('/mcp', async (req, res) => {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `NCAA API error: ${response.status}` }] }, id });
-          const data = await response.json();
-          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }, id });
+          return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: JSON.stringify(await response.json(), null, 2) }] }, id });
         } catch (err) {
           return res.json({ jsonrpc: '2.0', result: { content: [{ type: 'text', text: `Error: ${err.message}` }] }, id });
         }
       }
 
-      // Unknown tool
-      return res.json({
-        jsonrpc: '2.0',
-        error: { code: -32601, message: `Unknown tool: ${name}` },
-        id
-      });
+      return res.json({ jsonrpc: '2.0', error: { code: -32601, message: `Unknown tool: ${name}` }, id });
     }
 
-    // Unknown method
-    return res.json({
-      jsonrpc: '2.0',
-      error: { code: -32601, message: `Unknown method: ${method}` },
-      id
-    });
+    return res.json({ jsonrpc: '2.0', error: { code: -32601, message: `Unknown method: ${method}` }, id });
 
   } catch (error) {
     console.error('MCP error:', error);
-    return res.status(500).json({
-      jsonrpc: '2.0',
-      error: { code: -32603, message: error.message },
-      id: req.body?.id
-    });
+    return res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: error.message }, id: req.body?.id });
   }
 });
 
-// Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 NCAA Women's Sports MCP Server running on port ${PORT}`);
   console.log(`📊 Tools available: 20`);
@@ -499,7 +476,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`MCP Key: ${MCP_API_KEY ? 'SET ✓' : 'NONE'}\n`);
 });
 
-// Keep alive
 setInterval(() => {
   fetch(`http://localhost:${PORT}/health`).catch(() => {});
   console.log(`💓 Alive: ${Math.floor(process.uptime())}s`);
